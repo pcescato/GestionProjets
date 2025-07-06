@@ -1,13 +1,15 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String, Text, JSON
+from sqlalchemy import create_engine, Column, Integer, Text, JSON
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sentence_transformers import SentenceTransformer
 import re
+import os
 
-app = FastAPI(title="Backend Notes avec Embeddings")
+app = FastAPI(title="Notes Backend avec Embeddings")
 
-DATABASE_URL = "mysql+pymysql://notesuser:notespwd@localhost/notesdb"
+# Variables d'environnement pour la config
+DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://notesuser:notespwd@mariadb/notesdb")
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
@@ -17,12 +19,12 @@ class Note(Base):
     __tablename__ = "notes"
     id = Column(Integer, primary_key=True, index=True)
     content = Column(Text, nullable=False)
-    embedding = Column(JSON)  # Stocke liste float dans JSON
+    embedding = Column(JSON)  # Stockage JSON du vecteur
     tags = Column(JSON)       # Liste de tags simples
 
 Base.metadata.create_all(bind=engine)
 
-model = SentenceTransformer('all-MiniLM-L6-v2')  # modèle léger local
+model = SentenceTransformer('all-MiniLM-L6-v2')  # Modèle local léger
 
 class NoteIn(BaseModel):
     content: str
@@ -32,7 +34,6 @@ class NoteOut(BaseModel):
     tags: list[str]
 
 def extract_tags(text: str, max_tags=5):
-    # Extraction simple : mots fréquents >3 lettres, sans stopwords basiques
     stopwords = {"le", "la", "les", "de", "des", "un", "une", "et", "à", "en", "du"}
     words = re.findall(r'\b\w{4,}\b', text.lower())
     freq = {}
@@ -55,3 +56,7 @@ async def create_note(note_in: NoteIn):
     db.close()
 
     return NoteOut(id=note.id, tags=tags)
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
