@@ -2,16 +2,60 @@ services:
   traefik:
     image: traefik:v2.10
     command:
-      - "--api.insecure=true"
-      - "--providers.docker=true"
+      - "--api.dashboard=true"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
+      - "--providers.docker=true"
+      - "--certificatesresolvers.le.acme.httpchallenge=true"
+      - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.le.acme.email=ton-email@domain.com"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
     ports:
       - "80:80"
       - "443:443"
-      - "8080:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./letsencrypt:/letsencrypt
+    restart: unless-stopped
+    networks:
+      - web
+
+  backend:
+    build: ./backend
+    environment:
+      - DATABASE_URL=mysql+pymysql://notesuser:notespwd@mariadb/notesdb
+      - WEAVIATE_URL=http://weaviate:8080
+      - LLM_API_URL=https://api.deepinfra.ai/v1/chat/completions
+      - LLM_API_KEY=ton_token
+    labels:
+      - "traefik.http.routers.api.rule=Host(`api.tondomaine.com`)"
+      - "traefik.http.routers.api.entrypoints=websecure"
+      - "traefik.http.routers.api.tls.certresolver=le"
+    networks:
+      - web
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    labels:
+      - "traefik.http.routers.frontend.rule=Host(`notes.tondomaine.com`)"
+      - "traefik.http.routers.frontend.entrypoints=websecure"
+      - "traefik.http.routers.frontend.tls.certresolver=le"
+    networks:
+      - web
+    restart: unless-stopped
+
+  hugo:
+    image: klakegg/hugo:ext-alpine
+    volumes:
+      - ./hugo-site:/site
+    command: server --bind=0.0.0.0 --port=1313
+    labels:
+      - "traefik.http.routers.hugo.rule=Host(`docs.tondomaine.com`)"
+      - "traefik.http.routers.hugo.entrypoints=websecure"
+      - "traefik.http.routers.hugo.tls.certresolver=le"
+    networks:
+      - web
     restart: unless-stopped
 
   mariadb:
@@ -23,6 +67,8 @@ services:
       MYSQL_PASSWORD: notespwd
     volumes:
       - mariadb_data:/var/lib/mysql
+    networks:
+      - web
     restart: unless-stopped
 
   weaviate:
@@ -30,48 +76,37 @@ services:
     environment:
       QUERY_DEFAULTS_LIMIT: 20
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      DEFAULT_VECTORIZER_MODULE: "none"
+      ENABLE_MODULES: "none"
       PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
-      DEFAULT_VECTORIZER_MODULE: "text2vec-transformers"
-      ENABLE_MODULES: "text2vec-transformers"
-    ports:
-      - "8081:8080"
     volumes:
       - weaviate_data:/var/lib/weaviate
-    restart: unless-stopped
-
-  backend:
-    build: ./backend
-    environment:
-      - DATABASE_URL=mysql+pymysql://notesuser:notespwd@mariadb/notesdb
-      - WEAVIATE_URL=http://weaviate:8080
-      - LLM_API_URL=https://api.deepinfra.ai
-      - LLM_API_KEY=ta_clef_api
-    depends_on:
-      - mariadb
-      - weaviate
     ports:
-      - "8000:8000"
-    restart: unless-stopped
-
-  hugo:
-    image: klakegg/hugo:ext-alpine
-    volumes:
-      - ./hugo-site:/site
-    command: server --bind=0.0.0.0 --baseURL=http://localhost --port=1313 --disableFastRender
-    ports:
-      - "1313:1313"
+      - "8081:8080"
+    networks:
+      - web
     restart: unless-stopped
 
   portainer:
-    image: portainer/portainer-ce:latest
+    image: portainer/portainer-ce
     ports:
       - "9000:9000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
+    labels:
+      - "traefik.http.routers.portainer.rule=Host(`portainer.tondomaine.com`)"
+      - "traefik.http.routers.portainer.entrypoints=websecure"
+      - "traefik.http.routers.portainer.tls.certresolver=le"
+    networks:
+      - web
     restart: unless-stopped
 
 volumes:
   mariadb_data:
   weaviate_data:
   portainer_data:
+
+networks:
+  web:
+    external: false
