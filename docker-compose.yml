@@ -1,0 +1,77 @@
+services:
+  traefik:
+    image: traefik:v2.10
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+  mariadb:
+    image: mariadb:10.11
+    environment:
+      MYSQL_ROOT_PASSWORD: example_root_pwd
+      MYSQL_DATABASE: notesdb
+      MYSQL_USER: notesuser
+      MYSQL_PASSWORD: notespwd
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    restart: unless-stopped
+
+  weaviate:
+    image: semitechnologies/weaviate:1.19.11
+    environment:
+      QUERY_DEFAULTS_LIMIT: 20
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
+      DEFAULT_VECTORIZER_MODULE: "text2vec-transformers"
+      ENABLE_MODULES: "text2vec-transformers"
+    ports:
+      - "8081:8080"
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    environment:
+      - DATABASE_URL=mysql+pymysql://notesuser:notespwd@mariadb/notesdb
+      - WEAVIATE_URL=http://weaviate:8080
+      - LLM_API_URL=https://api.deepinfra.ai
+      - LLM_API_KEY=ta_clef_api
+    depends_on:
+      - mariadb
+      - weaviate
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  hugo:
+    image: klakegg/hugo:ext-alpine
+    volumes:
+      - ./hugo-site:/site
+    command: server --bind=0.0.0.0 --baseURL=http://localhost --port=1313 --disableFastRender
+    ports:
+      - "1313:1313"
+    restart: unless-stopped
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    restart: unless-stopped
+
+volumes:
+  mariadb_data:
+  weaviate_data:
+  portainer_data:
